@@ -1,4 +1,10 @@
-"""Assign transcripts to Cellpose ROIs and write updated Parquet file."""
+"""Assign transcripts to Cellpose ROIs and write updated Parquet file.
+
+This helper assumes the transcripts contain global coordinates.  Depending on
+when ``transcripts.parquet`` was generated the columns may be named either
+``global_x``/``global_y`` or ``x_location``/``y_location`` (the format produced
+for Baysor segmentation).
+"""
 
 from pathlib import Path
 import pandas as pd
@@ -57,6 +63,20 @@ def assign_cells(
 
     df = pd.read_parquet(transcripts_path)
 
+    # Determine the column names for global coordinates.  The dataframe
+    # produced by :class:`~merfish3danalysis.PixelDecoder` may store the
+    # coordinates as ``global_x``/``global_y`` or, if prepared for Baysor,
+    # ``x_location``/``y_location``.
+    if {"global_y", "global_x"}.issubset(df.columns):
+        y_col, x_col = "global_y", "global_x"
+    elif {"y_location", "x_location"}.issubset(df.columns):
+        y_col, x_col = "y_location", "x_location"
+    else:
+        raise KeyError(
+            "Could not find global coordinate columns. Expected either"
+            " {'global_y','global_x'} or {'y_location','x_location'}"
+        )
+
     rois = roiread(roi_path)
     polygons = [Polygon(roi.subpixel_coordinates[:, ::-1]) for roi in rois]
 
@@ -65,7 +85,7 @@ def assign_cells(
         rtree_index.insert(idx, poly.bounds)
 
     def check_point(row: pd.Series) -> int:
-        pt = Point(row["global_y"], row["global_x"])
+        pt = Point(row[y_col], row[x_col])
         candidates = list(rtree_index.intersection(pt.bounds))
         for cand in candidates:
             if polygons[cand].contains(pt):
